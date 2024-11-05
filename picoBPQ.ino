@@ -1,4 +1,3 @@
-
 #include "microOneWire.h"
 #include "LittleFS.h" // LittleFS is declared
 #include "Adafruit_TinyUSB.h"
@@ -103,15 +102,15 @@ void setup()
 
   Serial.begin(115200);
 
+  while (!Serial)
+    delay(1000);
+
   // check to see if multiple CDCs are enabled
-  if ( CFG_TUD_CDC < 2 )
+  if (CFG_TUD_CDC < 2 )
   {
-    while(1) {
-      Serial.printf("CFG_TUD_CDC must be at least 2, current value is %u\n", CFG_TUD_CDC);
-      Serial.println("  Config file is located in Adafruit_TinyUSB_Arduino/src/arduino/ports/{platform}/tusb_config_{platform}.h");
-      Serial.println("  where platform is one of: nrf, rp2040, samd");
-      delay(1000);
-    }
+    Serial.printf("To use multiple USB Serial ports CFG_TUD_CDC must be at least 2, current value is %u\n", CFG_TUD_CDC);
+    Serial.println("Config file is located in arduino15/packages/rp2040/hardware/rp2040/4.2.0/libraries/Adafruit_TinyUSB_Arduino/src/arduino/ports/rp2040/tusb_config_rp2040.h");
+    Serial.println("Continuing with one usb serial device");
   }
 
   USBSer1.begin(115200);
@@ -145,7 +144,7 @@ void setup()
   CONSOLE->print("Init Complete RTC Time ");
   Serial.println(DS1904getClock());
 
-//  Serial.printf("CFG_TUD_CDC %d\n",CFG_TUD_CDC);
+  Serial.printf("CFG_TUD_CDC %d\n",CFG_TUD_CDC);
 //  Serial.printf("DTR %d\n", USBSer2.dtr());
 
 }
@@ -554,7 +553,7 @@ extern "C" void picofprintf(File * file, const char * format, ...)
   
 extern"C" void picoWriteLine(File * file, char * Data, int len)
 {
-  tfile->write(Data, len);
+  file->write(Data, len);
 }
   
 extern "C" int createandwritefile(char * FN, char * Data, int len)
