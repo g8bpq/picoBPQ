@@ -61,6 +61,7 @@ UCHAR L3KEEP[7] = {'K'+'K','E'+'E','E'+'E','P'+'P','L'+'L','I'+'I', 0xe0};	//  K
 
 time_t CurrentSecs;
 time_t lastSlowSecs;
+time_t last15Mins;
 
 char WL2KCall[10] = "";
 char WL2KLoc[7] = "";

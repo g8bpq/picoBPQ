@@ -15,7 +15,8 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with LinBPQ/BPQ32.  If not, see http://www.gnu.org/licenses
-*/	
+*/
+
 
 //
 //	C replacement for Main.asm
@@ -64,9 +65,11 @@ void picofprintf(void * file, const char * format, ...);
 
 #include "configstructs.h"
 
-extern struct CONFIGTABLE xxcfg;
+extern struct CONFIGTABLE * xxcfg;
 extern BOOL needAIS;
 extern int needADSB;
+extern char PWTEXT[];
+extern int PWLen;
 
 extern struct CMDX COMMANDS[200];
 
@@ -150,6 +153,10 @@ int BBS = 1;					// INCLUDE BBS SUPPORT
 int NODE = 1;					// INCLUDE SWITCH SUPPORT
 
 int FULL_CTEXT = 1;				// CTEXT ON ALL CONNECTS IF NZ
+
+int L4Compress = 0;
+int L4CompMaxframe = 3;
+int L4CompPaclen = 236;
 
 BOOL LogL4Connects = FALSE;
 BOOL LogAllConnects = FALSE;
@@ -269,7 +276,7 @@ char BridgeMap[MaxBPQPortNo + 1][MaxBPQPortNo + 1] = {0};
 // Keep Buffers at end
 	
 
-void ** Bufferlist[100] = {0};
+void ** Bufferlist[250] = {0};
 
 extern BOOL IPRequired;
 extern BOOL PMRequired;
@@ -420,7 +427,7 @@ int xxxxx = MAXDATA;
 
 BOOL Start()
 {
-	struct CONFIGTABLE * cfg = &xxcfg;
+	struct CONFIGTABLE * cfg = xxcfg;
 	struct APPLCONFIG * ptr1;
 	struct PORTCONTROL * PORT = NULL;
 	struct FULLPORTDATA * FULLPORT;		// Including HW Data
@@ -437,6 +444,9 @@ BOOL Start()
 	int i, n;
 
 	struct ROUTECONFIG * Rcfg;
+
+
+  int PORTENTRYLEN = sizeof(struct PORTCONTROL);
 
 	// Reinit everything in case of restart
 
@@ -459,74 +469,21 @@ BOOL Start()
 
 	AUTOSAVE = cfg->C_AUTOSAVE;
 	
-	if (cfg->C_L4APPL)
-		L4APPL = cfg->C_L4APPL;
-
-	CFLAG = cfg->C_C;
-
 	IPRequired = cfg->C_IP;
-	PMRequired = cfg->C_PM;
-	
+
 	if (cfg->C_MAXHOPS)
 		MaxHops = cfg->C_MAXHOPS;
 
 	if (cfg->C_MAXRTT)
 		MAXRTT = cfg->C_MAXRTT * 100;
 
-	if (cfg->C_NODE == 0 && cfg->C_BBS)
-	{
-		//	USE BBS CALL FOR NODE if Set, otherwise find first APPLCALL
-		//	Unless BBS also = 0
-
-		if (cfg->C_BBSCALL[0])
-		{
-			memcpy(MYNODECALL, cfg->C_BBSCALL, 10);
-			memcpy(MYALIASTEXT, cfg->C_BBSALIAS, 6);
-			memcpy(MYALIASLOPPED, cfg->C_BBSALIAS, 10);
-		}
-		else
-		{
-			ptr1 = &cfg->C_APPL[0];
 	
-			for (i = 0; i < NumberofAppls; i++)
-			{
-				if (ptr1->ApplCall[0] != ' ')
-				{
-					memcpy(MYNODECALL, &ptr1->ApplCall[0], 10);
-					memcpy(MYALIASTEXT, &ptr1->ApplAlias, 6);
-					memcpy(MYALIASLOPPED, &ptr1->ApplAlias, 10);
-
-					break;
-				}
-				ptr1++;
-			}
-		}
-
-	}
-	else
-	{
-		memcpy(MYNODECALL, cfg->C_NODECALL, 10);
-		memcpy(MYALIASTEXT, cfg->C_NODEALIAS, 6);
-		memcpy(MYALIASLOPPED, cfg->C_NODEALIAS, 10);
-	}
+	memcpy(MYNODECALL, cfg->C_NODECALL, 10);
+	memcpy(MYALIASTEXT, cfg->C_NODEALIAS, 6);
+	memcpy(MYALIASLOPPED, cfg->C_NODEALIAS, 10);
 
 	strlop(MYALIASLOPPED, ' ');
 
-
-	//	IF NO BBS, SET BOTH TO _NODE CALLSIGN
-
-	if (cfg->C_BBS == 0)
-	{
-		memcpy(APPLCALLTABLE[0].APPLCALL_TEXT, cfg->C_NODECALL, 10);
-		memcpy(APPLCALLTABLE[0].APPLALIAS_TEXT, cfg->C_NODEALIAS, 10);
-	}
-	else
-	{
-		memcpy(APPLCALLTABLE[0].APPLCALL_TEXT, cfg->C_BBSCALL, 10);
-		memcpy(APPLCALLTABLE[0].APPLALIAS_TEXT, cfg->C_BBSALIAS, 10 );
-	}
-
-	BBSQUAL = cfg->C_BBSQUAL;
 	
 	//	copy MYCALL to NETROMCALL
 
@@ -580,8 +537,7 @@ BOOL Start()
 	L4DEFAULTWINDOW = cfg->C_L4WINDOW;
 	L4T1 = cfg->C_L4TIMEOUT;
 
-//	MOV	AX,C_BUFFERS
-//	MOV	NUMBEROFBUFFERS,AX
+  NUMBEROFBUFFERS = cfg->C_BUFFERS;
 
 	PACLEN = cfg->C_PACLEN;
 	T3 = cfg->C_T3 * 3;
@@ -590,8 +546,7 @@ BOOL Start()
 		L4LIMIT = 120;					// Don't allow stupidly low
 	L2KILLTIME = L4LIMIT * 3;
 	L4DELAY = cfg->C_L4DELAY;
-	BBS = cfg->C_BBS;
-	NODE = cfg->C_NODE;
+	NODE = 1;
 	LINKEDFLAG = cfg->C_LINKEDFLAG;
 	MAXLINKS = cfg->C_MAXLINKS;
 	MAXDESTS = cfg->C_MAXDESTS;
@@ -603,7 +558,15 @@ BOOL Start()
 	LogAllConnects = cfg->C_LogAllConnects;
 	AUTOSAVEMH = cfg->C_SaveMH;
 	EventsEnabled = cfg->C_EVENTS;
+
+  // Set up password
+
+  strcpy(PWTEXT, &cfg->C_PASSWORD[1]);
+  strlop(PWTEXT, '"');
+	PWLen = strlen(PWTEXT);
  
+  free(cfg->C_PASSWORD);
+
 	// Get pointers to PASSWORD and APPL1 commands
 
 //	int APPL1 = 0;
@@ -626,45 +589,15 @@ BOOL Start()
 		CMD++;
 	}
 
-//	SET UP APPLICATION LIST
-
-	memset(&CMDALIAS[0][0], ' ', NumberofAppls * ALIASLEN );
-
-	ptr1 = (struct APPLCONFIG *)&xxcfg.C_APPL[0];
-	ptr3 = &CMDALIAS[0][0];
-
-	for (i = 0; i < NumberofAppls; i++)
-	{
-		if (ptr1->Command[0] != ' ')
-		{
-			ptr2 = (char *)&COMMANDS[APPL1 + i];
-	
-			memcpy(ptr2, ptr1, 12);
-		
-			// See if an Alias
-	
-			if (ptr1->CommandAlias[0] != ' ')	
-				memcpy(ptr3, ptr1->CommandAlias, ALIASLEN);
-
-			//	SET LENGTH FIELD
-
-			*(ptr2 + 12) = 0;				// LENGTH
-			ptr4 = ptr2;
-
-			while (*(ptr4) > 32)
-			{
-				ptr4++;
-				*(ptr2 + 12) = *(ptr2 + 12) + 1;
-			}
-		}
-		ptr1 ++;
-		ptr2 += CMDXLEN;
-		ptr3 += ALIASLEN;
-	}
-
 	// Set up Exclude List
 
 	memcpy(ExcludeList, cfg->C_EXCLUDE, 71);
+
+
+  strlcpy(MQTT_HOST, cfg->C_MQTT_HOST, 80);
+  MQTT_PORT = cfg->C_MQTT_PORT;
+  strlcpy(MQTT_USER, cfg->C_MQTT_USER, 80);
+  strlcpy(MQTT_PASS, cfg->C_MQTT_PASS, 80);
 
 	n = sizeof(struct FULLPORTDATA);
 
@@ -680,6 +613,7 @@ BOOL Start()
 		//	SET UP NEXT PORT PTR
 
 		PORT = &FULLPORT->PORTCONTROL;
+
 		PORT->PORTPOINTER = (struct PORTCONTROL *)zalloc(sizeof(struct FULLPORTDATA));
 
 		PORT->PORTNUMBER = (UCHAR)PortRec->PORTNUM;
@@ -947,44 +881,6 @@ BOOL Start()
 	PORT->PORTPOINTER = NULL;		// End of list
 
 
-	//	SET UP APPLICATION CALLS AND ALIASES
-
-	APPL = &APPLCALLTABLE[0]; 
-
-	ptr1 = (struct APPLCONFIG *)&xxcfg.C_APPL[0];
-
-	i = NumberofAppls;
-	
-	if (ptr1->ApplCall[0] == ' ')
-	{
-		//	APPL1CALL IS NOT SPECIFED - LEAVE VALUES SET FROM BBSCALL
-
-		APPL++;
-		ptr1++;
-		i--;
-	}
-
-	while (i)
-	{
-		memcpy(APPL->APPLCALL_TEXT, ptr1->ApplCall, 10);
-		ConvToAX25(APPL->APPLCALL_TEXT, APPL->APPLCALL);
-		memcpy(APPL->APPLALIAS_TEXT, ptr1->ApplAlias, 10);
-		ConvToAX25(APPL->APPLALIAS_TEXT, APPL->APPLALIAS);
-		ConvToAX25(ptr1->L2Alias, APPL->L2ALIAS);
-		memcpy(APPL->APPLCMD, ptr1->Command, 12);	
-	
-		APPL->APPLQUAL = ptr1->ApplQual;
-
-		if (ptr1->CommandAlias[0] != ' ')
-		{
-			APPL->APPLHASALIAS = 1;
-			memcpy(APPL->APPLALIASVAL, &ptr1->CommandAlias[0], 48);
-		}
-
-		APPL++;
-		ptr1++;
-		i--;
-	}
 	//	SET UP VARIOUS CONTROL TABLES
 
 	LINKS = (struct _LINKTABLE *)zalloc(MAXLINKS * sizeof(struct _LINKTABLE));
@@ -1060,33 +956,22 @@ BOOL Start()
 		Rcfg++;
 		ROUTE++;
 	}
-
 	//	SET UP INFO MESSAGE
 
-	ptr2 = &cfg->C_INFOMSG[0];
-	ptr3 = zalloc(strlen(&cfg->C_INFOMSG[0] + 2));
+	if (cfg->C_INFOMSG)
+		INFOMSG = cfg->C_INFOMSG;
+	else
+		INFOMSG = zalloc(2);
 
-	INFOMSG = ptr3;
-
-	while ((*ptr2))
-	{
-		*(ptr3++) = *(ptr2++);
-	}
-	*ptr3++ = 0;			// Null Terminate
 
 	//	SET UP CTEXT MESSAGE
 
-	ptr2 = &cfg->C_CTEXT[0];
-	ptr3 = zalloc(strlen(&cfg->C_CTEXT[0] + 2));
+	if (cfg->C_CTEXT)
+		CTEXTMSG = cfg->C_CTEXT;
+	else
+		CTEXTMSG = zalloc(2);
 
-	CTEXTMSG = ptr3;
-
-	while ((*ptr2))
-	{
-		*(ptr3++) = *(ptr2++);
-	}
-
-	CTEXTLEN = (int)(ptr3 - (unsigned char *)CTEXTMSG);
+	CTEXTLEN = strlen(CTEXTMSG);
 
 	//	SET UP ID MESSAGE
 
@@ -1101,22 +986,24 @@ BOOL Start()
 	IDHDDR.CTL = 3;
 	IDHDDR.PID = 0xf0;
 
-	ptr2 = &cfg->C_IDMSG[0];
+	ptr2 = cfg->C_IDMSG;
 	ptr3 = &IDHDDR.L2DATA[0];
 
-	while ((*ptr2))
+	while (ptr2 && (*ptr2))
 	{
 		*(ptr3++) = *(ptr2++);
 	}
 
 	IDHDDR.LENGTH = (int)(ptr3 - (unsigned char *)&IDHDDR);
 
-
 	//Consoleprintf("PORTS %p LINKS %p DESTS %p ROUTES %p L4 %p BUFFERS %p\n",
 	//	PORTTABLE, LINKS, DESTS, NEIGHBOURS, L4TABLE, BUFFERPOOL);
 
 	Debugprintf("PORTS %p LINKS %p DESTS %p ROUTES %p L4 %p Free Heap %d",
 		PORTTABLE, LINKS, DESTS, NEIGHBOURS, L4TABLE, getFreeHeap());
+
+  if (NUMBEROFBUFFERS > 250)
+    NUMBEROFBUFFERS = 250;
 
 	i = NUMBEROFBUFFERS;
 
@@ -1132,6 +1019,9 @@ BOOL Start()
 
 		NUMBEROFBUFFERS++;
 		MAXBUFFS++;
+
+    if (getFreeHeap() < 50000)
+      break;
 	}
 
 	//	Copy Bridge Map
@@ -1218,8 +1108,10 @@ BOOL Start()
 	GetPortCTEXT(0, 0, 0, 0);
 
 
-	CurrentSecs = lastSlowSecs = time(NULL);
+	last15Mins = CurrentSecs = lastSlowSecs = time(NULL);
 
+  free(xxcfg);
+  
 	return 0;
 }
 
@@ -1736,17 +1628,13 @@ VOID TIMERINTERRUPT()
 		L2TimerProc();					// 300 mS
 	}
 
-	if (CurrentSecs - lastSlowSecs >= 60)		// 1 PER MIN
+	if (CurrentSecs - lastSlowSecs >= 60)		// 1 PER  MIN
 	{
 		lastSlowSecs = CurrentSecs;
 
 		L3TimerProc();
-
-		Debugprintf("BPQ32 Heartbeat: Buffers %d Free Heap %d", QCOUNT, getFreeHeap());
-		
 		StatsTimer();
 
-	
 		// Call Mode Map support routine
 
 /*
@@ -1764,7 +1652,13 @@ VOID TIMERINTERRUPT()
 		}
 */
 	}
-	
+
+  if (CurrentSecs - last15Mins >= 900)		// 1 PER  15 MIN
+	{
+		last15Mins = CurrentSecs;
+		Debugprintf("BPQ32 Heartbeat: Buffers %d Free Heap %d", QCOUNT, getFreeHeap());
+  }
+
 	if (L4TIMERFLAG >= 10)				// 1 PER SEC
 	{
 		L4TIMERFLAG -= 10;
@@ -2139,11 +2033,10 @@ VOID INITIALISEPORTS()
 
 VOID FindLostBuffers()
 {
-  /*
-
 	void ** Buff;
 	int n, i;
 	unsigned int rev;
+  void ** SaveBufferlist[NUMBEROFBUFFERS];
 
 	UINT CodeDump[16];
 	char codeText[65] = "";
@@ -2171,29 +2064,6 @@ VOID FindLostBuffers()
 		}
 
 		DEST++;
-	}
-
-	n = 0;
-
-	while (n < BPQHOSTSTREAMS + 4)
-	{
-		// Check Trace Q
-
-		if (HOSTSESS->HOSTTRACEQ)
-		{
-			int Count = C_Q_COUNT(&HOSTSESS->HOSTTRACEQ);
-
-			Debugprintf("Trace Buffers Stream %d Count %d", n, Count);
-
-			L4 = HOSTSESS->HOSTSESSION;
-
-			if (L4 && (L4->L4TX_Q || L4->L4RX_Q || L4->L4HOLD_Q || L4->L4RESEQ_Q))
-				Debugprintf("Stream %d %d %d %d %d", n, C_Q_COUNT(&L4->L4TX_Q),
-					C_Q_COUNT(&L4->L4RX_Q), C_Q_COUNT(&L4->L4HOLD_Q), C_Q_COUNT(&L4->L4RESEQ_Q));
-
-		}
-		n++;
-		HOSTSESS++;
 	}
 
 	n = MAXCIRCUITS;
@@ -2231,14 +2101,7 @@ VOID FindLostBuffers()
 
 	// Build list of buffers, then mark off all on free Q
 
-	Buff = BUFFERPOOL;
-	n = 0;
-
-	for (i = 0; i < NUMBEROFBUFFERS; i++)
-	{
-		Bufferlist[n++] = Buff;
-		Buff += (BUFFALLOC / sizeof(void *));
-	}
+  memcpy(SaveBufferlist, Bufferlist, NUMBEROFBUFFERS * sizeof(void *));
 
 	Buff = FREE_Q;
 
@@ -2248,9 +2111,9 @@ VOID FindLostBuffers()
 
 		while (n--)
 		{
-			if (Bufferlist[n] == Buff)
+			if (SaveBufferlist[n] == Buff)
 			{
-				Bufferlist[n] = 0;
+				SaveBufferlist[n] = 0;
 				break;
 			}
 		}
@@ -2260,12 +2123,12 @@ VOID FindLostBuffers()
 
 	while (n--)
 	{
-		if (Bufferlist[n])
+		if (SaveBufferlist[n])
 		{
-			char * fileptr = (char *)Bufferlist[n];
-			MESSAGE * Msg = (MESSAGE *)Bufferlist[n];
+			char * fileptr = (char *)SaveBufferlist[n];
+			MESSAGE * Msg = (MESSAGE *)SaveBufferlist[n];
 
-			memcpy(CodeDump, Bufferlist[n], 64);
+			memcpy(CodeDump, SaveBufferlist[n], 64);
 	
 			for (i = 0; i < 64; i++)
 			{
@@ -2286,7 +2149,7 @@ VOID FindLostBuffers()
 			}
 
 			Debugprintf("%08x %08x %08x %08x %08x %08x %08x %08x %08x ",
-				Bufferlist[n], CodeDump[0], CodeDump[1], CodeDump[2], CodeDump[3], CodeDump[4], CodeDump[5], CodeDump[6], CodeDump[7]);
+				SaveBufferlist[n], CodeDump[0], CodeDump[1], CodeDump[2], CodeDump[3], CodeDump[4], CodeDump[5], CodeDump[6], CodeDump[7]);
 
 			Debugprintf("         %08x %08x %08x %08x %08x %08x %08x %08x %d",
 				CodeDump[8], CodeDump[9], CodeDump[10], CodeDump[11], CodeDump[12], CodeDump[13], CodeDump[14], CodeDump[15], Msg->Process);
@@ -2296,16 +2159,6 @@ VOID FindLostBuffers()
  
 	}
 
-	// rebuild list for buffer check
-	Buff = BUFFERPOOL;	
-	n = 0;
-
-	for (i = 0; i < NUMBEROFBUFFERS; i++)
-	{
-		Bufferlist[n++] = Buff;
-		Buff += (BUFFALLOC / sizeof(void *));
-	}
-  */
 }
 
 void WriteConnectLog(char * fromCall, char * toCall, UCHAR * Mode)

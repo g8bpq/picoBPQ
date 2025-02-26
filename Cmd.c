@@ -68,6 +68,8 @@ int seeifInterlockneeded(struct PORTCONTROL *PORT);
 VOID InnerCommandHandler(TRANSPORTENTRY *Session, struct DATAMESSAGE *Buffer);
 extern VOID KISSTX();
 HANDLE OpenConnection(struct PORTCONTROL * PortVector);
+int getFreeHeap();
+void tcpCall(char * host, int port);
 
 char COMMANDBUFFER[81] = "";  // Command Hander input buffer
 char OrigCmdBuffer[81] = "";  // Command Hander input buffer before toupper
@@ -78,8 +80,10 @@ UCHAR SAVEDAPPLFLAGS = 0;
 
 UCHAR ALIASINVOKED = 0;
 
+char CONSOLELOG[2048] = "";
+char DEBUGLOG[2048] = "";
 
-VOID *CMDPTR = 0;
+
 
 short CMDPACLEN = 0;
 
@@ -137,7 +141,7 @@ struct _EXTPORTDATA DP;  // Only way I can think of to get offets to port data i
 char CMDALIAS[ALIASLEN][NumberofAppls] = { 0 };
 char *ALIASPTR = &CMDALIAS[0][0];
 
-extern struct CMDX COMMANDS[200];
+extern const struct CMDX COMMANDS[200];
 
 int CMDXLEN = sizeof(struct CMDX);
 
@@ -164,9 +168,12 @@ VOID UZ7HOCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CM
 VOID FILESCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *UserCMD);
 VOID READCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *UserCMD);
 VOID UPLOADCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *UserCMD);
+VOID DIALCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *UserCMD);
 VOID RENAMECMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *UserCMD);
 VOID DELETECMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *UserCMD);
 VOID CLOCKCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *UserCMD);
+VOID DEBUGLOGCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *UserCMD);
+VOID CONSOLELOGCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *UserCMD);
 VOID QTSMCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *UserCMD);
 
 
@@ -230,7 +237,8 @@ char *__cdecl Cmdprintf(TRANSPORTENTRY *Session, char *Bufferptr, const char *fo
 }
 
 
-VOID SENDNODES(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *CMD) {
+VOID SENDNODES(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *CMD) 
+{
   SENDNODESMSG();
 
   strcpy(Bufferptr, OKMSG);
@@ -239,7 +247,8 @@ VOID SENDNODES(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct C
   SendCommandReply(Session, REPLYBUFFER, (int)(Bufferptr - (char *)REPLYBUFFER));
 }
 
-VOID SAVEMHCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *CMD) {
+VOID SAVEMHCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *CMD) 
+{
   SaveMH();
 
   strcpy(Bufferptr, OKMSG);
@@ -272,6 +281,9 @@ void BPQFastPoll();
 
 VOID REBOOT(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *CMD)
 {
+  SaveNodes();
+  SaveMH();
+
   Bufferptr = Cmdprintf(Session, Bufferptr, "Looping until watchdog resets node\r");
   SendCommandReply(Session, REPLYBUFFER, (int)(Bufferptr - (char *)REPLYBUFFER));
 
@@ -608,7 +620,7 @@ VOID CMDT00(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX
   SendCommandReply(Session, REPLYBUFFER, (int)(Bufferptr - (char *)REPLYBUFFER));
 }
 
-UCHAR PWLen;
+int PWLen;
 char PWTEXT[80];
 
 VOID PWDCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *CMD) {
@@ -694,10 +706,21 @@ VOID CMDSTATS(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CM
 
   //	IF ASKING FOR PORT STATS, DONT DO SYSTEM ONES
 
-  if (Port == 0) {
-    uptime = FormatUptime(STATSTIME);
-    Bufferptr = Cmdprintf(Session, Bufferptr, "%s", uptime);
+  if (Port == 0)
+  {
+		struct tm * TM;
+    struct tm result;
 
+		char uptime[50];
+		time_t szClock = STATSTIME * 60;
+
+    TM = gmtime_r(&szClock, &result);
+	
+		sprintf(uptime, "Uptime (Days Hours Mins)     %.2d:%.2d:%.2d\r",
+			TM->tm_yday, TM->tm_hour, TM->tm_min);
+
+    Bufferptr = Cmdprintf(Session, Bufferptr, "%s", uptime);
+    Bufferptr = Cmdprintf(Session, Bufferptr, "Free Heap                   %9d\r", getFreeHeap());
     Bufferptr = Cmdprintf(Session, Bufferptr, "Semaphore Get-Rel/Clashes   %9d%9d\r",
                           Semaphore.Gets - Semaphore.Rels, Semaphore.Clashes);
 
@@ -2851,11 +2874,11 @@ VOID CMDQUERY(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CM
   //	DISPLAY AVAILABLE COMMANDS
 
   int n;
-  char *ptr;
+  const char *ptr;
   char ApplList[2048];
   char *out = ApplList;
 
-  struct CMDX *CMD = &COMMANDS[APPL1];
+  const struct CMDX *CMD = &COMMANDS[APPL1];
 
   for (n = 0; n < NumberofAppls; n++) {
     ptr = &CMD->String[0];
@@ -3105,13 +3128,12 @@ int CHECKINTERLOCK(struct PORTCONTROL *OURPORT) {
     }
     PORT = PORT->PORTPOINTER;
   }
-
   return 0;
 }
 
 //	SYSOP COMMANDS
 
-struct CMDX COMMANDS[200] =
+const struct CMDX COMMANDS[200] =
 {
 	{"SAVENODES   ",8, SAVENODES, 0},
 	{"SAVEMH      ",6, SAVEMHCMD, 0},
@@ -3171,7 +3193,9 @@ struct CMDX COMMANDS[200] =
 	{"RENAME      ",6,RENAMECMD,0},
 	{"UPLOAD      ",6,UPLOADCMD,0},
   {"CLOCK       ",5,CLOCKCMD,0},
-
+  {"DIAL        ",4,DIALCMD,0},
+  {"DEBUGLOG    ",5,DEBUGLOGCMD,0},
+  {"CONSOLELOG  ",6,CONSOLELOGCMD,0},
 	{"PASSWORD    ", 8, PWDCMD, 0},
 
 	{"*** LINKED  ",10,LINKCMD,0},
@@ -3200,12 +3224,12 @@ struct CMDX COMMANDS[200] =
 	{"MHL         ",3,MHCMD,0},		// Local Times
 	{"MHV         ",3,MHCMD,0},
 	{"MHEARD      ",1,MHCMD,0},
+  {"NRR         ",1,NRRCMD,0},
 	{"UZ7HO       ",5,UZ7HOCMD,0},
 	{"QTSM        ",4,QTSMCMD,0}
-
 };
 
-struct CMDX *CMD = NULL;
+const struct CMDX *CMD = NULL;
 
 int NUMBEROFCOMMANDS = sizeof(COMMANDS) / sizeof(struct CMDX);
 
@@ -3258,7 +3282,8 @@ char *SetupNodeHeader(struct DATAMESSAGE *Buffer) {
   return ptr;
 }
 
-VOID SendCommandReply(TRANSPORTENTRY *Session, struct DATAMESSAGE *Buffer, int Len) {
+VOID SendCommandReply(TRANSPORTENTRY *Session, struct DATAMESSAGE *Buffer, int Len) 
+{
   if (Len == (4 + sizeof(void *)))  // Null Packet
   {
     ReleaseBuffer((UINT *)Buffer);
@@ -3272,16 +3297,52 @@ VOID SendCommandReply(TRANSPORTENTRY *Session, struct DATAMESSAGE *Buffer, int L
   PostDataAvailable(Session);
 }
 
+int picoWriteDial(char * Buffer, int Len);
 
-VOID CommandHandler(TRANSPORTENTRY *Session, struct DATAMESSAGE *Buffer) {
+VOID CommandHandler(TRANSPORTENTRY *Session, struct DATAMESSAGE *Buffer) 
+{
   // ignore frames with single NULL (Keepalive)
 
-  if (Buffer->LENGTH == sizeof(void *) + 5 && Buffer->L2DATA[0] == 0) {
+  if (Buffer->LENGTH == sizeof(void *) + 5 && Buffer->L2DATA[0] == 0) 
+  {
     ReleaseBuffer(Buffer);
     return;
   }
 
-  	// moved from Inner so we can send long frames for testing
+  if (Session->DIAL)
+  {
+		if (Buffer->L2DATA[0] == 26 || _memicmp(&Buffer->L2DATA[0], "/ex", 3) == 0)		// CTRL/Z or /ex
+		{
+			REPLYBUFFER = Buffer;
+      char * ptr1;
+
+			Session->DIAL = 0;
+
+			// SET UP HEADER
+
+			Buffer->PID = 0xf0;
+			ptr1 = SetupNodeHeader(Buffer);
+			memcpy(ptr1, OKMSG, 3);
+			ptr1 += 3;
+			SendCommandReply(Session, Buffer, (int)(ptr1 - (char *)Buffer));
+
+			return;
+		}  
+
+    if (_memicmp(&Buffer->L2DATA[0], "ctrl/z", 6) == 0 )
+    {
+      Buffer->L2DATA[0] = 26; 
+      picoWriteDial(&Buffer->L2DATA[0], 1);
+    }
+    else 
+      picoWriteDial(&Buffer->L2DATA[0], Buffer->LENGTH - (MSGHDDRLEN));
+
+    ReleaseBuffer(Buffer);
+    
+    return;
+  }
+
+	// moved from Inner so we can send long frames for testing
 
 	if (Session->UNPROTO)
 	{
@@ -3503,8 +3564,7 @@ VOID InnerCommandHandler(TRANSPORTENTRY *Session, struct DATAMESSAGE *Buffer)
 	{
 		DIGIMESSAGE Msg;
 		int Len = Buffer->LENGTH - (MSGHDDRLEN + 1);	
-
-    Debugprintf("%s %d", Buffer->L2DATA, Len);
+    char * Data = &Buffer->L2DATA[0];
 
 		if (Buffer->L2DATA[0] == 26 || (Len == 4 && _memicmp(&Buffer->L2DATA[0], "/ex", 3) == 0))		// CTRL/Z or /ex
 		{
@@ -3518,7 +3578,7 @@ VOID InnerCommandHandler(TRANSPORTENTRY *Session, struct DATAMESSAGE *Buffer)
 		  if (createandwritefile(Session->uploadFilename, Session->uploadBuffer,  Session->uploadlen))
 	      ptr1 += sprintf(ptr1, "File Saved\r");
       else
-      	ptr1 += sprintf(ptr1, "Cread File failed\r");
+      	ptr1 += sprintf(ptr1, "Save File failed\r");
 
 			free(Session->uploadBuffer);
 			Session->uploadBuffer = 0;
@@ -3534,13 +3594,21 @@ VOID InnerCommandHandler(TRANSPORTENTRY *Session, struct DATAMESSAGE *Buffer)
 		}
 		else
 		{
-			if ((Len + Session->uploadlen) > Session->uploadalloc)
+			if ((Len + Session->uploadlen + 2) > Session->uploadalloc)
 			{
 				Session->uploadalloc += 2048;
 				Session->uploadBuffer = realloc(Session->uploadBuffer, Session->uploadlen);
 			}
 
-			memcpy(&Session->uploadBuffer[Session->uploadlen], &Buffer->L2DATA[0], Len);
+      // make sure line ends crlf
+
+      strlop(Data, '\r');
+      strlop(Data, '\n');
+      strcat(Data, "\r\n");
+      Len = strlen(Data);
+
+
+			memcpy(&Session->uploadBuffer[Session->uploadlen], Data, Len);
 			Session->uploadlen += Len;
 
       ReleaseBuffer((UINT *)Buffer);
@@ -3616,8 +3684,6 @@ VOID DoTheCommand(TRANSPORTENTRY *Session) {
 
     ptr1 = ptr2;
 
-    CMDPTR = CMD;
-
     if (n == APPL1)  // First APPL command
     {
       APPLMASK = 1;  // FOR APPLICATION ATTACH REQUESTS
@@ -3629,7 +3695,7 @@ VOID DoTheCommand(TRANSPORTENTRY *Session) {
     if (memcmp(CMD->String, ptr1, CL) == 0) {
       // Found match so far - check rest
 
-      char *ptr2 = &CMD->String[CL];
+      char *ptr2 = (char *)&CMD->String[CL];
 
       ptr1 += CL;
 
@@ -3983,14 +4049,11 @@ VOID KISSCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMD
 }
 
 
-VOID FINDBUFFS(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *CMD) {
+VOID FINDBUFFS(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *CMD)
+ {
   FindLostBuffers();
+  Bufferptr = Cmdprintf(Session, Bufferptr, "Lost buffer info dumped to Debug terminal\r");
 
-#ifdef WIN32
-  Bufferptr = Cmdprintf(Session, Bufferptr, "Lost buffer info dumped to Debugview\r");
-#else
-  Bufferptr = Cmdprintf(Session, Bufferptr, "Lost buffer info dumped to syslog\r");
-#endif
   SendCommandReply(Session, REPLYBUFFER, (int)(Bufferptr - (char *)REPLYBUFFER));
 }
 
@@ -4252,10 +4315,11 @@ VOID FILESCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CM
   }
 }
 
-char *month[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-char *dat[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+const char *month[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+const char *dat[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 
 void DS1904setClock(uint32_t Time);
+void setRTC(time_t Time);
 
 VOID CLOCKCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *UserCMD)
 {
@@ -4268,23 +4332,111 @@ VOID CLOCKCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CM
   if (adjust)
   {
     struct timeval now;
- 
+
+    if (adjust > 86400)       // SAbosulte UNIX time
+      szClock = adjust;
+    else  
       szClock += adjust;
      
-      now.tv_sec=szClock;
-      now.tv_usec=0;
+    now.tv_sec=szClock;
+    now.tv_usec=0;
 
-      settimeofday(&now, NULL);
-      DS1904setClock(szClock);
-
+    settimeofday(&now, NULL);
+    setRTC(szClock);
   }
  
 	TM = gmtime(&szClock);
 
-	Bufferptr = Cmdprintf(Session, Bufferptr, "%s, %02d %s %3d %02d:%02d:%02d GMT", dat[TM->tm_wday], TM->tm_mday, month[TM->tm_mon],
+	Bufferptr = Cmdprintf(Session, Bufferptr, "%s, %02d %s %3d %02d:%02d:%02d GMT\r", dat[TM->tm_wday], TM->tm_mday, month[TM->tm_mon],
 		TM->tm_year + 1900, TM->tm_hour, TM->tm_min, TM->tm_sec);
 
 	SendCommandReply(Session, REPLYBUFFER, (int)(Bufferptr - (char *)REPLYBUFFER));
+}
+
+int picoOpenSerial(char * Name, int speed);
+void sendSMS(char * Number, char *text);
+
+void DIALCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *CMD)
+{
+	// link session to LTE modem on Serial6.  When /ex received return
+
+	CmdTail = CmdTail + (OrigCmdBuffer - COMMANDBUFFER);  // Replace with original case version
+	strlop(CmdTail, ' ');
+
+  // if Params supplied they are host to call, if none enter interactive mode
+
+  if (CmdTail[0])
+  {
+     char * port = strlop(CmdTail, ':');
+     tcpCall(CmdTail, atoi(port));
+	   Bufferptr = Cmdprintf(Session, Bufferptr, "Calling %s:%s\r", CmdTail, port);
+  	SendCommandReply(Session, REPLYBUFFER, (int)(Bufferptr - (char *)REPLYBUFFER));
+	  return;
+  }
+
+  Session->DIAL =  99; //picoOpenSerial("Serial6", 115200);
+
+	Bufferptr = Cmdprintf(Session, Bufferptr, "Enter AT commands. At end enter /ex\r");
+
+	SendCommandReply(Session, REPLYBUFFER, (int)(Bufferptr - (char *)REPLYBUFFER));
+	return;
+}
+
+int RemoveLF(char * Message)
+{
+	// Remove lf chars and nulls
+
+  int len = strlen(Message);
+	char * ptr1, * ptr2;
+	ptr1 = ptr2 = Message;
+
+	while (len-- > 0)
+	{
+		while (*ptr1 == 0 && len)
+		{
+			ptr1++;
+			len--;
+		}
+		
+		*ptr2 = *ptr1;
+
+		if (*ptr1 == '\r')
+			if (*(ptr1+1) == '\n')
+			{
+				ptr1++;
+				len--;
+			}
+		ptr1++;
+		ptr2++;
+	}
+
+  *(ptr2) = 0;
+	return (int)(ptr2 - Message);
+}
+
+
+
+void DEBUGLOGCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *CMD)
+{
+  char Copy[2048];
+
+  strlcpy(Copy, DEBUGLOG, 2048);
+  RemoveLF(Copy);
+	Bufferptr = Cmdprintf(Session, Bufferptr, Copy);
+	SendCommandReply(Session, REPLYBUFFER, (int)(Bufferptr - (char *)REPLYBUFFER));
+	return;
+}
+
+
+void CONSOLELOGCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMDX *CMD)
+{
+  char Copy[2048];
+
+  strlcpy(Copy, CONSOLELOG, 2048);
+  RemoveLF(Copy);
+	Bufferptr = Cmdprintf(Session, Bufferptr, Copy);
+  SendCommandReply(Session, REPLYBUFFER, (int)(Bufferptr - (char *)REPLYBUFFER));
+	return;
 }
 
 
@@ -4340,3 +4492,560 @@ VOID QTSMCMD(TRANSPORTENTRY *Session, char *Bufferptr, char *CmdTail, struct CMD
   return;
 }
 
+/*
+
+				// Could be a YAPP Header
+
+
+					if (conn->InputLen == 2 && conn->InputBuffer[0] == ENQ  && conn->InputBuffer[1] == 1)		// YAPP Send_Init
+					{
+						UCHAR YAPPRR[2];
+						YAPPRR[0] = ACK;
+						YAPPRR[1] = 1;
+
+						conn->InputMode = 'Y';
+						QueueMsg(conn, YAPPRR, 2);
+
+						conn->InputLen = 0;
+						return 0;
+					}
+				}
+				}
+
+
+
+BOOL ProcessYAPPMessage(CIRCUIT * conn)
+{
+	int Len = conn->InputLen;
+	UCHAR * Msg = conn->InputBuffer;
+	int pktLen = Msg[1];
+	char Reply[2] = {ACK};
+	int NameLen, SizeLen, OptLen;
+	char * ptr;
+	int FileSize;
+	char MsgFile[MAX_PATH];
+	FILE * hFile;
+	char Mess[255];
+	int len;
+	char * FN = &Msg[2];
+
+	switch (Msg[0])
+	{
+	case ENQ: // YAPP Send_Init
+
+		// Shouldn't occur in session. Reset state
+				
+		Mess[0] = ACK;
+		Mess[1] = 1;
+		QueueMsg(conn, Mess, 2);
+		Flush(conn);
+		conn->InputLen = 0;
+		if (conn->MailBuffer)
+		{
+			free(conn->MailBuffer);
+			conn->MailBufferSize=0;
+			conn->MailBuffer=0;
+		}
+		return TRUE;
+
+	case SOH:
+
+		// HD Send_Hdr     SOH  len  (Filename)  NUL  (File Size in ASCII)  NUL (Opt) 
+
+		// YAPPC has date/time in dos format
+
+		if (Len < Msg[1] + 1)
+			return 0;
+
+		NameLen = (int)strlen(FN);
+		strcpy(conn->ARQFilename, FN);
+		ptr = &Msg[3 + NameLen];
+		SizeLen = (int)strlen(ptr);
+		FileSize = atoi(ptr);
+
+		// Check file name for unsafe characters (.. / \)
+
+		if (strstr(FN, "..") || strchr(FN, '/') || strchr(FN, '\\'))
+		{
+			Mess[0] = NAK;
+			Mess[1] = 0;
+			QueueMsg(conn, Mess, 2);
+			Flush(conn);
+			len = sprintf_s(Mess, sizeof(Mess), "YAPP File Name %s invalid\r", FN);
+			QueueMsg(conn, Mess, len);
+			SendPrompt(conn, conn->UserPointer);
+			WriteLogLine(conn, '!', Mess, len - 1, LOG_BBS);
+
+			conn->InputLen = 0;
+			conn->InputMode = 0;
+
+			return FALSE;
+		}
+
+		OptLen = pktLen - (NameLen + SizeLen + 2);
+
+		conn->YAPPDate = 0;
+
+		if (OptLen >= 8)		// We have a Date/Time for YAPPC
+		{
+			ptr = ptr + SizeLen + 1;
+			conn->YAPPDate = strtol(ptr, NULL, 16);
+		}
+
+		// Check Size
+
+		if (FileSize > MaxRXSize)
+		{
+			Mess[0] = NAK;
+			Mess[1] = sprintf(&Mess[2], "YAPP File %s size %d larger than limit %d\r", conn->ARQFilename, FileSize, MaxRXSize);
+			QueueMsg(conn, Mess, Mess[1] + 2);
+	
+			Flush(conn);
+
+			len = sprintf_s(Mess, sizeof(Mess), "YAPP File %s size %d larger than limit %d\r", conn->ARQFilename, FileSize, MaxRXSize);
+			QueueMsg(conn, Mess, len);
+			SendPrompt(conn, conn->UserPointer);
+			WriteLogLine(conn, '!', Mess, len - 1, LOG_BBS);
+
+			conn->InputLen = 0;
+			conn->InputMode = 0;
+
+			return FALSE;
+		}
+		
+		// Make sure file does not exist
+
+	
+		sprintf_s(MsgFile, sizeof(MsgFile), "%s/Files/%s", BaseDir, conn->ARQFilename);
+	
+		hFile = fopen(MsgFile, "rb");
+
+		if (hFile)
+		{
+			Mess[0] = NAK;
+			Mess[1] = sprintf(&Mess[2], "YAPP File %s already exists\r", conn->ARQFilename);;
+			QueueMsg(conn, Mess, Mess[1] + 2);
+	
+			Flush(conn);
+	
+			len = sprintf_s(Mess, sizeof(Mess), "YAPP File %s already exists\r", conn->ARQFilename);
+			QueueMsg(conn, Mess, len);
+			SendPrompt(conn, conn->UserPointer);
+			WriteLogLine(conn, '!', Mess, len - 1, LOG_BBS);
+			fclose(hFile);
+
+			conn->InputLen = 0;
+			conn->InputMode = 0;
+
+			return FALSE;
+		}
+
+
+		conn->MailBufferSize = FileSize;
+		conn->MailBuffer=malloc(FileSize);
+		conn->YAPPLen = 0;
+
+		if (conn->YAPPDate)			// If present use YAPPC
+			Reply[1] = ACK;			//Receive_TPK
+		else
+			Reply[1] = 2;			//Rcv_File
+
+		QueueMsg(conn, Reply, 2);
+
+		len = sprintf_s(Mess, sizeof(Mess), "YAPP upload to %s started", conn->ARQFilename);
+		WriteLogLine(conn, '!', Mess, len, LOG_BBS);
+
+		conn->InputLen = 0;
+		return FALSE;
+		
+	case STX:
+
+		// Data Packet
+
+		// Check we have it all
+
+		if (conn->YAPPDate)			// If present use YAPPC so have checksum
+		{
+			if (pktLen > (Len - 3))		// -3 for header and checksum
+				return 0;				// Wait for rest
+		}
+		else
+		{
+			if (pktLen > (Len - 2))		// -2 for header
+				return 0;				// Wait for rest
+		}
+
+		// Save data and remove from buffer
+
+		// if YAPPC check checksum
+
+		if (conn->YAPPDate)
+		{
+			UCHAR Sum = 0;
+			int i;
+			UCHAR * uptr = &Msg[2];
+
+			i = pktLen;
+
+			while(i--)
+				Sum += *(uptr++);
+
+			if (Sum != *uptr)
+			{
+				// Checksum Error
+
+				Mess[0] = CAN;
+				Mess[1] = 0;
+				QueueMsg(conn, Mess, 2);
+				Flush(conn);
+				len = sprintf_s(Mess, sizeof(Mess), "YAPPC Checksum Error\r");
+				QueueMsg(conn, Mess, len);
+				WriteLogLine(conn, '!', Mess, len - 1, LOG_BBS);
+				conn->InputLen = 0;
+				conn->InputMode = 0;
+				return TRUE;
+			}
+		}
+
+		if ((conn->YAPPLen) + pktLen > conn->MailBufferSize)
+		{
+			// Too Big ??
+
+			Mess[0] = CAN;
+			Mess[1] = 0;
+			QueueMsg(conn, Mess, 2);
+			Flush(conn);
+			len = sprintf_s(Mess, sizeof(Mess), "YAPP Too much data received\r");
+			QueueMsg(conn, Mess, len);
+			WriteLogLine(conn, '!', Mess, len - 1, LOG_BBS);
+			conn->InputLen = 0;
+			conn->InputMode = 0;
+			return TRUE;
+		}
+
+
+		memcpy(&conn->MailBuffer[conn->YAPPLen], &Msg[2], pktLen);
+		conn->YAPPLen += pktLen;
+
+		if (conn->YAPPDate)
+			++pktLen;				// Add Checksum
+
+		conn->InputLen -= (pktLen + 2);
+		memmove(conn->InputBuffer, &conn->InputBuffer[pktLen + 2], conn->InputLen);
+
+		return TRUE;
+
+	case ETX:
+
+		// End Data
+
+
+
+		if (conn->YAPPLen == conn->MailBufferSize)
+		{
+			// All received
+
+			int ret;
+			DWORD Written = 0;
+
+			sprintf_s(MsgFile, sizeof(MsgFile), "%s/Files/%s", BaseDir, conn->ARQFilename);
+	
+			hFile = fopen(MsgFile, "wb");
+			if (hFile)
+			{
+				Written = fwrite(conn->MailBuffer, 1, conn->YAPPLen, hFile);
+				fclose(hFile);
+
+			}
+
+			free(conn->MailBuffer);
+			conn->MailBufferSize=0;
+			conn->MailBuffer=0;
+
+			if (Written != conn->YAPPLen)
+			{
+				Mess[0] = CAN;
+				Mess[1] = 0;
+				QueueMsg(conn, Mess, 2);
+				Flush(conn);
+				len = sprintf_s(Mess, sizeof(Mess), "Failed to save YAPP File\r");
+				QueueMsg(conn, Mess, len);
+				WriteLogLine(conn, '!', Mess, len - 1, LOG_BBS);
+				conn->InputLen = 0;
+				conn->InputMode = 0;
+			}
+		}
+
+		Reply[1] = 3;		//Ack_EOF
+		QueueMsg(conn, Reply, 2);
+		Flush(conn);	
+		conn->InputLen = 0;
+
+		return TRUE;
+
+	case EOT:
+
+		// End Session
+
+		Reply[1] = 4;		// Ack_EOT
+		QueueMsg(conn, Reply, 2);
+		Flush(conn);
+		conn->InputLen = 0;
+		conn->InputMode = 0;
+	
+		len = sprintf_s(Mess, sizeof(Mess), "YAPP file %s received\r", conn->ARQFilename);
+		WriteLogLine(conn, '!', Mess, len - 1, LOG_BBS);
+		QueueMsg(conn, Mess, len);
+		SendPrompt(conn, conn->UserPointer);
+
+		return TRUE;
+
+	case CAN:
+
+		// Abort
+
+		Mess[0] = ACK;
+		Mess[1] = 5;			// CAN Ack
+		QueueMsg(conn, Mess, 2);
+		Flush(conn);
+
+		if (conn->MailBuffer)
+		{
+			free(conn->MailBuffer);
+			conn->MailBufferSize=0;
+			conn->MailBuffer=0;
+		}
+
+		// There may be a reason after the CAN
+
+		len = Msg[1];
+
+		if (len)
+		{
+			char * errormsg = &Msg[2];
+			errormsg[len] = 0;
+			nodeprintf(conn, "File Rejected - %s\r", errormsg);
+		}
+		else
+			
+			nodeprintf(conn, "File Rejected\r");
+
+
+		len = sprintf_s(Mess, sizeof(Mess), "YAPP Transfer cancelled by Terminal\r");
+		WriteLogLine(conn, '!', Mess, len - 1, LOG_BBS);
+
+		conn->InputLen = 0;
+		conn->InputMode = 0;
+		conn->BBSFlags &= ~YAPPTX;
+
+		return FALSE;
+
+	case ACK:
+
+		switch (Msg[1])
+		{
+		case 1:					// Rcv_Rdy
+
+			// HD Send_Hdr     SOH  len  (Filename)  NUL  (File Size in ASCII)  NUL (Opt)
+			
+			len = (int)strlen(conn->ARQFilename) + 3;
+		
+			strcpy(&Mess[2], conn->ARQFilename);
+			len += sprintf(&Mess[len], "%d", conn->MailBufferSize);
+			len++;					// include null
+			Mess[0] = SOH;
+			Mess[1] = len - 2;
+
+			QueueMsg(conn, Mess, len);
+			Flush(conn);
+			conn->InputLen = 0;
+
+			return FALSE;
+
+		case 2:
+
+			//	Start sending message
+
+			YAPPSendData(conn);
+			conn->InputLen = 0;
+			return FALSE;
+
+		case 3:
+
+			// ACK EOF - Send EOT
+
+			
+			Mess[0] = EOT;
+			Mess[1] = 1;
+			QueueMsg(conn, Mess, 2);
+			Flush(conn);
+
+			conn->InputLen = 0;
+			return FALSE;
+	
+		case 4:
+
+			// ACK EOT
+
+			conn->InputMode = 0;
+			conn->BBSFlags &= ~YAPPTX;
+
+			conn->InputLen = 0;
+			return FALSE;
+
+		default:
+			conn->InputLen = 0;
+			return FALSE;
+
+
+
+		}
+	
+	case NAK:
+
+		// Either Reject or Restart
+
+		// RE Resume       NAK  len  R  NULL  (File size in ASCII)  NULL
+
+		if (conn->InputLen  > 2 && Msg[2] == 'R' && Msg[3] == 0)
+		{
+			int posn = atoi(&Msg[4]);
+			
+			conn->YAPPLen += posn;
+			conn->MailBufferSize -= posn;
+
+			YAPPSendData(conn);
+			conn->InputLen = 0;
+			return FALSE;
+
+		}
+
+		// There may be a reason after the ack
+
+		len = Msg[1];
+
+		if (len)
+		{
+			char * errormsg = &Msg[2];
+			errormsg[len] = 0;
+			nodeprintf(conn, "File Rejected - %s\r", errormsg);
+		}
+		else
+			
+			nodeprintf(conn, "File Rejected\r");
+
+		conn->InputMode = 0;
+		conn->BBSFlags &= ~YAPPTX;
+		conn->InputLen = 0;
+		SendPrompt(conn, conn->UserPointer);
+		return FALSE;
+	}
+
+	nodeprintf(conn, "Unexpected message during YAPP Transfer. Transfer canncelled\r");
+
+	conn->InputMode = 0;
+	conn->BBSFlags &= ~YAPPTX;
+	conn->InputLen = 0;
+	SendPrompt(conn, conn->UserPointer);
+
+	return FALSE;
+
+}
+
+void YAPPSendFile(ConnectionInfo * conn, struct UserInfo * user, char * filename)
+{
+	int FileSize;
+	char MsgFile[MAX_PATH];
+	FILE * hFile;
+	struct stat STAT;
+
+	if (filename == NULL)
+	{
+		nodeprintf(conn, "Filename missing\r");
+		SendPrompt(conn, user);
+		return;
+	}
+
+	if (strstr(filename, "..") || strchr(filename, '/') || strchr(filename, '\\'))
+	{
+		nodeprintf(conn, "Invalid filename\r");
+		SendPrompt(conn, user);
+		return;
+	}
+
+	if (BaseDir[0])
+		sprintf_s(MsgFile, sizeof(MsgFile), "%s/Files/%s", BaseDir, filename);
+	else
+		sprintf_s(MsgFile, sizeof(MsgFile), "Files/%s", filename);
+
+	if (stat(MsgFile, &STAT) != -1)
+	{
+		FileSize = STAT.st_size;
+
+		hFile = fopen(MsgFile, "rb");
+
+		if (hFile)
+		{	
+			char Mess[255];
+			strcpy(conn->ARQFilename, filename);
+			conn->MailBuffer = malloc(FileSize);
+			conn->MailBufferSize = FileSize;
+			conn->YAPPLen = 0;
+			fread(conn->MailBuffer, 1, FileSize, hFile); 
+			fclose(hFile);
+	
+			Mess[0] = ENQ;
+			Mess[1] = 1;
+
+			QueueMsg(conn, Mess, 2);
+			Flush(conn);
+
+			conn->InputMode = 'Y';
+
+			return;
+		}
+	}
+
+	nodeprintf(conn, "File %s not found\r", filename);
+	SendPrompt(conn, user);
+}
+
+void YAPPSendData(ConnectionInfo * conn)
+{
+	char Mess[258];
+
+	conn->BBSFlags |= YAPPTX;
+
+	while (TXCount(conn->BPQStream) < 15)
+	{
+		int Left = conn->MailBufferSize;
+
+		if (Left == 0)
+		{
+			// Finished - send End Data
+
+			Mess[0] = ETX;
+			Mess[1] = 1;
+			
+			QueueMsg(conn, Mess, 2);
+			Flush(conn);
+
+			conn->BBSFlags &= ~YAPPTX;
+			break;
+		}
+
+		if (Left > conn->paclen - 2)		// 2 byte header
+			Left = conn->paclen -2;
+
+		memcpy(&Mess[2], &conn->MailBuffer[conn->YAPPLen], Left);
+		Mess[0] = STX;
+		Mess[1] = Left;
+				
+		QueueMsg(conn, Mess, Left + 2);
+		Flush(conn);
+
+		conn->YAPPLen += Left;
+		conn->MailBufferSize -= Left;
+	}
+}
+*/

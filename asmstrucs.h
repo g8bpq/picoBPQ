@@ -46,6 +46,7 @@ typedef int (FAR *FARPROCY)();
 #define L4BUSY	0x80		// BNA - DONT SEND ANY MORE
 #define L4NAK	0x40		// NEGATIVE RESPONSE FLAG
 #define L4MORE	0x20		// MORE DATA FOLLOWS - FRAGMENTATION FLAG
+#define L4COMP	0x10		// BPQ Specific use of spare it - data is compressed
 
 #define L4CREQ	1		// CONNECT REQUEST
 #define L4CACK	2		// CONNECT ACK
@@ -53,6 +54,7 @@ typedef int (FAR *FARPROCY)();
 #define L4DACK	4		// DISCONNECT ACK
 #define L4INFO	5		// INFORMATION
 #define L4IACK	6		// INFORMATION ACK
+#define L4RESET 7		// Paula's extension
 
 
 extern char MYCALL[];	// 7 chars, ax.25 format
@@ -174,9 +176,27 @@ typedef struct _TRANSPORTENTRY
 	int uploadlen;				// current size
 
 	uint64_t LISTEN;			// Port Mask if in Listen Mode
+  int DIAL;             // Set if accessing LTE modem
 	
 	char APPL[16];				// Set if session initiated by an APPL
 	int L4LIMIT;				// Idle time for this Session
+
+	//	Now support compressing NetRom Sessions.
+	//	We collect as much data as possible before compressing and re-packetizing
+
+	int AllowCompress;	
+	unsigned char * toCompress;	// Data being saved to compress
+	int toCompressLen;
+
+	unsigned char * unCompress;	// Data being saved to uncompress
+	int unCompressLen;
+
+	int Sent;
+	int SentAfterCompression;
+
+	int Received;
+	int ReceivedAfterExpansion;
+
 
 } TRANSPORTENTRY;
 
@@ -202,6 +222,9 @@ typedef struct ROUTE
 	UCHAR NEIGHBOUR_PORT;
 	UCHAR NEIGHBOUR_QUAL;
 	UCHAR NEIGHBOUR_FLAG;		// SET IF 'LOCKED' ROUTE
+
+#define LOCKEDBYCONFIG 1
+#define	LOCKEDBYSYSOP 2
 
 	struct _LINKTABLE * NEIGHBOUR_LINK;		// POINTER TO LINK FOR THIS NEIGHBOUR
 
@@ -452,7 +475,8 @@ typedef struct NR_DEST_ROUTE_ENTRY
 	struct ROUTE * ROUT_NEIGHBOUR;	// POINTER TO NEXT NODE IN PATH
 	UCHAR ROUT_QUALITY;		// QUALITY
 	UCHAR ROUT_OBSCOUNT;
-	UCHAR Padding[5];		// SO Entries are the same length
+	UCHAR ROUT_LOCKED;
+	UCHAR Padding[4];		// SO Entries are the same length
 } *PNR_DEST_ROUTE_ENTRY;
 
 typedef struct DEST_ROUTE_ENTRY
@@ -474,6 +498,7 @@ typedef struct DEST_LIST
 	UCHAR DEST_ALIAS[6];	
 
 	UCHAR DEST_STATE;			// CONTROL BITS - SETTING UP, ACTIVE ETC	
+	UCHAR DEST_LOCKED;
 
 	UCHAR DEST_ROUTE;			// CURRENTY ACTIVE DESTINATION
 	UCHAR INP3FLAGS;
@@ -713,7 +738,7 @@ typedef struct PORTCONTROL
 typedef struct FULLPORTDATA
 {
 	struct PORTCONTROL PORTCONTROL;	
-	UCHAR HARDWAREDATA[300];			// WORK AREA FOR HARDWARE DRIVERS
+	UCHAR HARDWAREDATA[200];			// WORK AREA FOR HARDWARE DRIVERS
 } *PFULLPORTDATA;
 
 // KISS Mapping of HARDWAREDATA
@@ -776,8 +801,6 @@ typedef struct KISSINFO
 
 } *PKISSINFO;
 
-// EXT Driver Mapping of HARDWAREDATA
-
 
 typedef struct _EXTPORTDATA
 {
@@ -798,69 +821,6 @@ typedef struct _EXTPORTDATA
 	int	FramesQueued;				// TX Frames queued in Driver
 
 } EXTPORTDATA, *PEXTPORTDATA;
-
-typedef struct _HDLCDATA
-{
-	struct PORTCONTROL PORTCONTROL	;	// REMAP HARDWARE INFO
-//
-//	Mapping of VXD fields (mainly to simplify debugging
-//
-
-	ULONG ASIOC;			// A CHAN ADDRESSES
-	ULONG SIO;				// OUR ADDRESSES (COULD BE A OR B) 
-	ULONG SIOC;
-	ULONG BSIOC;			// B CHAN CONTROL
-
-	struct _HDLCDATA * A_PTR; // PORT ENTRY FOR A CHAN
-	struct _HDLCDATA * B_PTR; // PORT ENTRY FOR B CHAN
-
-	VOID (FAR * VECTOR[4]) (); // INTERRUPT VECTORS
-
-//	UINT * IOTXCA;				// INTERRUPT VECTORS
-//	UINT * IOTXEA;
-//	UINT * IORXCA;
-//	UINT * IORXEA;	
-
-	UCHAR LINKSTS;
-
-	UINT * SDRNEXT;
-	UINT * SDRXCNT;
-	UINT * CURALP;
-	UCHAR OLOADS;				// LOCAL COUNT OF BUFFERS SHORTAGES
-	USHORT FRAMELEN;
-	UINT * SDTNEXT;				// POINTER to NEXT BYTE to TRANSMIT
-	USHORT SDTXCNT;				// CHARS LEFT TO SEND
-	UCHAR RR0;					// CURRENT RR0
-	UINT * TXFRAME;				// ADDRESS OF FRAME BEING SENT
-
-	UCHAR SDFLAGS;				// GENERAL FLAGS
-
-	void * PCTX_Q;				// HDLC HOLDING QUEUE
-	void * RXMSG_Q;				// RX INTERRUPT TO SDLC BG
-
-
-//;SOFTDCD		DB	0		; RX ACTIVE FLAG FOR 'SOFT DC
-	UCHAR TXDELAY;				// TX KEYUP DELAY TIMER
-	UCHAR SLOTTIME;				// TIME TO WAIT IF WE DONT SEND
-	UCHAR FIRSTCHAR;			// CHAR TO SEND FOLLOWING TXDELAY
-	USHORT L1TIMEOUT;			// UNABLE TO TX TIMEOUT
-	UCHAR PORTSLOTIMER;
-
-	USHORT TXBRG;				// FOR CARDS WITHOUT /32 DIVIDER
-	USHORT RXBRG;	
-
-	UCHAR WR10	;				// NRZ/NRZI FLAG
-
-	int	IRQHand;
-	int fd;						// file descriptor for LKM
-
-	ULONG IOLEN;				// Number of bytes in IO Space
-
-	struct PORTCONTROL * DRIVERPORTTABLE;	// ADDR OF PORT TABLE ENTRY IN VXD
-											// Used in NT Driver for Kernel Device Pointer
-
-}HDLCDATA, * PHDLCDATA;
-
 
 extern struct ROUTE * NEIGHBOURS;
 extern int  ROUTE_LEN;

@@ -1956,8 +1956,6 @@ void SaveMH()
 								*(Output++) = '*';			// No, so need *
 								Digi = '*';
 							}
-					
-
 					}
 					*(Output++) = ',';
 				}		
@@ -1991,7 +1989,6 @@ void SaveMH()
 	}
 
 	picoCloseFile(file);
-
 	return;
 }
 
@@ -2021,25 +2018,12 @@ DllExport int APIENTRY ClearNodes ()
 
 	return (0);
 }
-char * FormatUptime(int Uptime)
- {
-	struct tm * TM;
-	static char UPTime[50];
-	time_t szClock = Uptime * 60;
-
-	TM = gmtime(&szClock);
-
-	sprintf(UPTime, "Uptime (Days Hours Mins)     %.2d:%.2d:%.2d\r",
-		TM->tm_yday, TM->tm_hour, TM->tm_min);
-
-	return UPTime;
- }
 
 static char *month[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
-
 char * FormatMH(PMHSTRUC MH, char Format)
 {
+	struct tm buffer;
 	struct tm * TM;
 	static char MHTime[50];
 	time_t szClock;
@@ -2054,9 +2038,9 @@ char * FormatMH(PMHSTRUC MH, char Format)
 		szClock = time(NULL) - MH->MHTIME;
 
 	if (Format == 'L')
-		TM = localtime(&szClock);
+		TM = localtime_r(&szClock, &buffer);
 	else
-		TM = gmtime(&szClock);
+		TM = gmtime_r(&szClock, &buffer);
 
 	if (Format == 'U' || Format =='L')
 		sprintf(MHTime, "%s %02d %.2d:%.2d:%.2d  %s %s",

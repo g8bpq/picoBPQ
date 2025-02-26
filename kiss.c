@@ -386,9 +386,12 @@ void KISSINIT(struct KISSINFO *KISS) {
 
   KISS->OURCTRL = (PORT->CHANNELNUM - 'A') << 4;  // KISS CONTROL
 
-  if (FIRSTCHAN) {
+  if (FIRSTCHAN) 
+  {
     //	THIS IS NOT THE FIRST PORT ON THIS I/O ADDR - WE MUST BE USING
     //	AN ADDRESSABLE PROTOCOL - IE KISS AS DEFINED FOR KPC4 ETC
+
+    char Line[256];
 
     KISS->FIRSTPORT = FIRSTCHAN;  // QUEUE TX FRAMES ON FIRST
 
@@ -401,7 +404,9 @@ void KISSINIT(struct KISSINFO *KISS) {
     FIRSTCHAN->SUBCHAIN = KISS;  // PUT OURS ON END
     INITCOMMON(KISS);
 
-    Consoleprintf("ASYNC %s Chan %c \n", PORT->SerialPortName, PORT->CHANNELNUM);
+    sprintf(Line, "ASYNC %s Chan %c \n", PORT->SerialPortName, PORT->CHANNELNUM);
+    WritetoConsoleLocal(Line);
+    
   } else
     INITCOM(KISS);
 

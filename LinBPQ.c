@@ -23,21 +23,12 @@ along with LinBPQ/BPQ32.  If not, see http://www.gnu.org/licenses
 
 #include "CHeaders.h"
 
-
 #include <iconv.h>
 #include <errno.h>
-#ifndef MACBPQ
-#ifndef FREEBSD
-
-#endif
-#endif
-
-
 #include "time.h"
 
 #define ReturntoNode(stream) SessionControl(stream, 3, 0)
 #define ConnectUsingAppl(stream, appl) SessionControl(stream, 0, appl)
-
 
 
 void GetSemaphore(struct SEM *Semaphore, int ID);
@@ -162,17 +153,6 @@ int _MYTIMEZONE = 0;
 
 /* #define F_PWD        0x1000 */
 
-
-extern UCHAR BPQDirectory[260];
-extern UCHAR LogDirectory[260];
-extern UCHAR ConfigDirectory[260];
-
-// overrides from params
-UCHAR LogDir[260] = "";
-UCHAR ConfigDir[260] = "";
-UCHAR DataDir[260] = "";
-
-
 BOOL GetConfig(char *ConfigName);
 VOID DecryptPass(char *Encrypt, unsigned char *Pass, unsigned int len);
 int EncryptPass(char *Pass, char *Encrypt);
@@ -185,8 +165,6 @@ int APIENTRY SessionControl(int stream, int command, int Mask);
 BOOL ChatInit();
 VOID CloseChat();
 VOID CloseTNCEmulator();
-
-
 
 extern BOOL LogAPRSIS;
 
@@ -201,32 +179,6 @@ extern struct UserInfo *BBSChain;  // Chain of users that are BBSes
 
 extern struct MsgInfo **MsgHddrPtr;
 extern int NumberofMessages;
-
-extern int FirstMessageIndextoForward;  // Lowest Message wirh a forward bit set - limits search
-
-extern char UserDatabaseName[MAX_PATH];
-extern char UserDatabasePath[MAX_PATH];
-
-extern char MsgDatabasePath[MAX_PATH];
-extern char MsgDatabaseName[MAX_PATH];
-
-extern char BIDDatabasePath[MAX_PATH];
-extern char BIDDatabaseName[MAX_PATH];
-
-extern char WPDatabasePath[MAX_PATH];
-extern char WPDatabaseName[MAX_PATH];
-
-extern char BadWordsPath[MAX_PATH];
-extern char BadWordsName[MAX_PATH];
-
-extern char NTSAliasesPath[MAX_PATH];
-extern char NTSAliasesName[MAX_PATH];
-
-extern char BaseDir[MAX_PATH];
-extern char BaseDirRaw[MAX_PATH];     // As set in registry - may contain %NAME%
-extern char ProperBaseDir[MAX_PATH];  // BPQ Directory/BPQMailChat
-
-extern char MailDir[MAX_PATH];
 
 extern time_t MaintClock;  // Time to run housekeeping
 
@@ -247,10 +199,10 @@ int ReportTimer = 0;
 #define MAXSTACK 20
 #define INPUTLEN 512
 
-
 // Console Terminal Support
 
-struct ConTermS {
+struct ConTermS 
+{
   int BPQStream;
   BOOL Active;
   int Incoming;
@@ -374,7 +326,8 @@ int KissEncode(UCHAR *inbuff, UCHAR *outbuff, int len) {
   return txptr;
 }
 
-VOID Send_AX(UCHAR *Block, DWORD Len, UCHAR Port) {
+VOID Send_AX(UCHAR *Block, DWORD Len, UCHAR Port) 
+{
   // Block included the 7/11 byte header, Len does not
 
   struct PORTCONTROL *PORT;
@@ -397,16 +350,15 @@ VOID Send_AX(UCHAR *Block, DWORD Len, UCHAR Port) {
     return;
 
   memcpy(&Copy->DEST[0], &Block[MSGHDDRLEN], Len);
-
   Copy->LENGTH = (USHORT)Len + MSGHDDRLEN;
-
   Copy->PORT = Port;
 
   PUT_ON_PORT_Q(PORT, Copy);
 }
 
 
-VOID Send_AX_Datagram(PDIGIMESSAGE Block, DWORD Len, UCHAR Port) {
+VOID Send_AX_Datagram(PDIGIMESSAGE Block, DWORD Len, UCHAR Port) 
+{
   //	Can't use API SENDRAW, as that tries to get the semaphore, which we already have
 
   //  Len is the Payload Length (CTL, PID, Data)
@@ -430,7 +382,6 @@ VOID Send_AX_Datagram(PDIGIMESSAGE Block, DWORD Len, UCHAR Port) {
   Len = Len + (i * 7) + 14;  // Include Source, Dest and Digis
 
   Send_AX((unsigned char *)Block, Len, Port);
-
   return;
 }
 
@@ -462,7 +413,6 @@ VOID SENDIDMSG() {
     PORT = PORT->PORTPOINTER;
   }
 }
-
 
 
 VOID SENDBTMSG() {
@@ -571,11 +521,9 @@ VOID SENDUIMESSAGE(struct DATAMESSAGE *Msg) {
   }
 }
 
-
 void hookL2SessionAccepted(int Port, char *remotecall, char *ourcall, struct _LINKTABLE *LINK) {}
 void hookL2SessionAttempt(int Port, char *ourcall, char *remotecall, struct _LINKTABLE *LINK) {}
 void hookL2SessionDeleted(struct _LINKTABLE *LINK) {}
-
 
 int KissDecode(UCHAR *inbuff, int len) {
   int i, txptr = 0;
@@ -593,20 +541,18 @@ int KissDecode(UCHAR *inbuff, int len) {
           c = FEND;
       }
     }
-
     inbuff[txptr++] = c;
   }
-
   return txptr;
 }
 
 
-TRANSPORTENTRY *SetupSessionFromHost(PBPQVECSTRUC HOST, UINT ApplMask) {
+TRANSPORTENTRY *SetupSessionFromHost(PBPQVECSTRUC HOST, UINT ApplMask) 
+{
   // Create a Transport (L4) session linked to an incoming HOST (API) Session
 
   TRANSPORTENTRY *NewSess = L4TABLE;
   int Index = 0;
-
 
   while (Index < MAXCIRCUITS) {
     if (NewSess->L4USER[0] == 0) {
@@ -656,38 +602,6 @@ TRANSPORTENTRY *SetupSessionFromHost(PBPQVECSTRUC HOST, UINT ApplMask) {
   // Table Full
 
   return NULL;
-}
-
-
-
-VOID CheckProgramErrors() {
-  if (Restarting)
-    exit(0);  // Make sure can't loop in restarting
-
-  ProgramErrors++;
-
-  if (ProgramErrors > 25) {
-    Restarting = TRUE;
-
-    Debugprintf("Too Many Program Errors - Closing");
-
-    /*
-		SInfo.cb=sizeof(SInfo);
-		SInfo.lpReserved=NULL;
-		SInfo.lpDesktop=NULL;
-		SInfo.lpTitle=NULL;
-		SInfo.dwFlags=0;
-		SInfo.cbReserved2=0;
-  		SInfo.lpReserved2=NULL;
-
-		GetModuleFileName(NULL, ProgName, 256);
-
-		Debugprintf("Attempting to Restart %s", ProgName);
-
-		CreateProcess(ProgName, "MailChat.exe WAIT", NULL, NULL, FALSE, 0, NULL, NULL, &SInfo, &PInfo);
-*/
-    exit(0);
-  }
 }
 
 
@@ -802,14 +716,12 @@ char pgm[256] = "LINBPQ";
 char SESSIONHDDR[80] = "";
 int SESSHDDRLEN = 0;
 
-
 // Next 3 should be uninitialised so they are local to each process
 
 UCHAR MCOM;
 UCHAR MUIONLY;
 UCHAR MTX;
 uint64_t MMASK;
-
 
 UCHAR AuthorisedProgram = 1;  // Local Variable. Set if Program is on secure list
 
@@ -828,14 +740,6 @@ extern char ChatConfigName[250];
 
 BOOL EventsEnabled = 0;
 
-UCHAR *GetBPQDirectory() {
-  return BPQDirectory;
-}
-UCHAR *GetLogDirectory() {
-  return LogDirectory;
-}
-extern int POP3Timer;
-
 // Console Terminal Stuff
 
 int SendMsg(int stream, char *msg, int len);
@@ -843,14 +747,17 @@ int SendMsg(int stream, char *msg, int len);
 int ConTermKbhit(int n);
 void Contermprint(int n, char * Msg);
 
-void ConTermInput(int n, struct ConTermS *Conterm, char *Msg)
- {
+void ConTermInput(int n, char * Msg)
+{
+  struct ConTermS *Conterm = &ConTerms[n];
   int i;
 
-  if (Conterm->BPQStream == 0) {
+  if (Conterm->BPQStream == 0) 
+  {
     Conterm->BPQStream = FindFreeStream();
 
-    if (Conterm->BPQStream == 255) {
+    if (Conterm->BPQStream == 255) 
+    {
       Conterm->BPQStream = 0;
       Contermprint(n, "No Free Streams\n");
       return;
@@ -860,6 +767,12 @@ void ConTermInput(int n, struct ConTermS *Conterm, char *Msg)
   if (!Conterm->CONNECTED)
     SessionControl(Conterm->BPQStream, 1, 0);
 
+  if (n == 2)       // Modem Stream
+  {
+    SendMsg(Conterm->BPQStream, Msg, strlen(Msg));
+    return;
+  }
+  
   Conterm->StackIndex = 0;
 
   // Stack it
@@ -878,7 +791,8 @@ void ConTermInput(int n, struct ConTermS *Conterm, char *Msg)
   SendMsg(Conterm->BPQStream, Conterm->kbbuf, Conterm->kbptr + 1);
 }
 
-void ConTermPoll() {
+void ConTermPoll() 
+{
   int port, sesstype, paclen, maxframe, l4window, len;
   int state, change, InputLen, count;
   char callsign[11] = "";
@@ -886,7 +800,9 @@ void ConTermPoll() {
   int n;
   struct ConTermS *Conterm;
 
-  for (n = 0; n < 2; n++)
+  // Third ConTerm can be hooked to the LTE modem on Serial6 to give dialup console access.
+
+  for (n = 0; n < 3; n++)
   {
     Conterm = &ConTerms[n];
 
@@ -929,32 +845,35 @@ void ConTermPoll() {
       }
     }
 
-    int c = ConTermKbhit(n);
-
-    while (c != -1)
+    if (n != 2)       // Don't poll 3rd here as is used for dialup modem
     {
-      if (c == 8) 
-      {
-        if (Conterm->kbptr)
-          Conterm->kbptr--;
-        Contermprint(n, " \b");  // Already echoed bs - clear typed char from screen
-        c = ConTermKbhit(n);
-        continue;
-      }
+      int c = ConTermKbhit(n);
 
-      if (c == 13 || c == 10)
+      while (c != -1)
       {
-        Conterm->kbbuf[Conterm->kbptr] = 0;
+        if (c == 8) 
+        {
+          if (Conterm->kbptr)
+            Conterm->kbptr--;
+          Contermprint(n, " \b");  // Already echoed bs - clear typed char from screen
+          c = ConTermKbhit(n);
+          continue;
+        }
 
-        Contermprint(n, Conterm->kbbuf);
-        Contermprint(n, "\r\n");
-        ConTermInput(n, Conterm, Conterm->kbbuf);
-        Conterm->kbptr = 0;
+        if (c == 13 || c == 10)
+        {
+          Conterm->kbbuf[Conterm->kbptr] = 0;
+
+          Contermprint(n, Conterm->kbbuf);
+          Contermprint(n, "\r\n");
+          ConTermInput(n, Conterm->kbbuf);
+          Conterm->kbptr = 0;
+          c = ConTermKbhit(n);
+          continue;
+        }
+        Conterm->kbbuf[Conterm->kbptr++] = c;
         c = ConTermKbhit(n);
-        continue;
       }
-      Conterm->kbbuf[Conterm->kbptr++] = c;
-      c = ConTermKbhit(n);
     }
   }
 }
@@ -964,7 +883,7 @@ int Redirected = 0;
 int picoRename(char * from, char * to);
 void picocreateDefaultcfg();
 
-void BPQInit()
+int BPQInit()
  {
   int i;
   struct UserInfo *user = NULL;
@@ -973,31 +892,12 @@ void BPQInit()
  
   timeLoadedMS = GetTickCount();
 
-  Debugprintf("G8BPQ AX25 Packet Switch System Version %s %s\n", TextVerstring, Datestring);
-  Debugprintf("%s\n", VerCopyright);
+  Consoleprintf("G8BPQ AX25 Packet Switch System Version %s %s", TextVerstring, Datestring);
+  Consoleprintf("%s\n", VerCopyright);
 
   _MYTIMEZONE = 0;
 
   BPQDirectory[0] = 0;
-
-  strcpy(ConfigDirectory, BPQDirectory);
-  strcpy(LogDirectory, BPQDirectory);
-
-  Consoleprintf("Current Directory is %s", BPQDirectory);
-
-  if (LogDir[0]) {
-    strcpy(LogDirectory, LogDir);
-  }
-  if (DataDir[0]) {
-    strcpy(BPQDirectory, DataDir);
-    Consoleprintf("Working Directory is %s", BPQDirectory);
-  }
-  if (ConfigDir[0]) {
-    strcpy(ConfigDirectory, ConfigDir);
-    Consoleprintf("Config Directory is %s", ConfigDirectory);
-  }
-
-  Consoleprintf("Log Directory is %s", LogDirectory);
 
   if (!ProcessConfig("bpq32.cfg"))
 	{
@@ -1012,7 +912,7 @@ void BPQInit()
       if (!ProcessConfig("bpq32.cfg"))
     	{
 		    WritetoConsoleLocal("Default Configuration File Error - sending for help\n");
-			  return;
+			  return 0;
       }
 		}
 	}
@@ -1025,7 +925,7 @@ void BPQInit()
 
   if (Start() != 0) {
     FreeSemaphore(&Semaphore);
-    return;
+    return 0;
   }
 
   for (i = 0; PWTEXT[i] > 0x20; i++)
@@ -1042,6 +942,9 @@ void BPQInit()
 
   ConTerms[0].BPQStream = FindFreeStream();
   ConTerms[1].BPQStream = FindFreeStream();
+  ConTerms[2].BPQStream = FindFreeStream();
+
+  return 1;
 }
 
 int WritetoConsoleLocal(char *buff);
@@ -1049,7 +952,6 @@ int WritetoConsoleLocal(char *buff);
 int APIENTRY WritetoConsole(char *buff) {
   return WritetoConsoleLocal(buff);
 }
-
 
 void BPQFastPoll()
 {
@@ -1064,22 +966,56 @@ void BPQFastPoll()
 
   ConTermPoll();
 }
+
+int picoSerialGetLine(int Chan, char * Line, int maxline);
+
 void BPQTimerLoop()
+{
+	TRANSPORTENTRY * L4 = L4TABLE;
+	int n = MAXCIRCUITS;
+	int rxed = 0;
+  
+	GetSemaphore(&Semaphore, 2);
 
- {
-  GetSemaphore(&Semaphore, 2);
+	if (QCOUNT < 10) 
+	{
+		if (CLOSING == FALSE)
+			FindLostBuffers();
+		CLOSING = TRUE;
+	}
 
-  if (QCOUNT < 10) {
-    if (CLOSING == FALSE)
-      FindLostBuffers();
-    CLOSING = TRUE;
-  }
+	TIMERINTERRUPT();
 
-  TIMERINTERRUPT();
+	while (n--)
+	{
+		if (L4->DIAL == 0)
+		{
+			L4++;
+			continue;
+		}
+
+    char Line[256];
+
+    // Check LTE modem and send anything received to terminal
+	
+ //   int rxed = picoSerialGetLine(L4->DIAL, Line, 256);
+
+    if (rxed)
+    {
+      struct DATAMESSAGE * Buffer = GetBuff();
+
+      if (Buffer)
+      {
+	      Buffer->LENGTH = rxed + MSGHDDRLEN + 3;
+        memcpy(Buffer->L2DATA, Line, rxed);
+
+      	C_Q_ADD(&L4->L4TX_Q, (UINT *)Buffer);
+      }
+    }
+		L4++;
+	}
 
   FreeSemaphore(&Semaphore);
-
-
 
   Slowtimer++;
 
@@ -1087,16 +1023,30 @@ void BPQTimerLoop()
     Slowtimer = 0;
 }
 
+int sendtoDialSession(char * Line, int rxed)
+{
+	TRANSPORTENTRY * L4 = L4TABLE;
+  int n = MAXCIRCUITS;
+  struct DATAMESSAGE * Buffer;
+  
+	while (n--)
+	{
+		if (L4->DIAL)
+		{
+		  Buffer = GetBuff();
 
-
-//if (AUTOSAVE)
-//SaveNodes();
-
-//if (AUTOSAVEMH)
-//	SaveMH();
-
-
-// Close any open logs
+      if (Buffer)
+      {
+	      Buffer->LENGTH = rxed + MSGHDDRLEN + 3;
+        memcpy(Buffer->L2DATA, Line, rxed);
+      	C_Q_ADD(&L4->L4TX_Q, (UINT *)Buffer);
+        return 1;
+      }
+    }
+		L4++;
+	}
+  return 0;
+}
 
 
 int CountBits64(uint64_t in) {
